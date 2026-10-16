@@ -1,3 +1,6 @@
 # tinyotp
 
-A new Flutter project.
+今天要用 github 上传个项目，结果告诉我 github 要强制开启 2FA 了， 也不知道这是什么， 说的几个外国应用都不好下载， 问了下 chatgpt 它说能开发一个， 还不太难。 刚好今天下载了 codex 桌面版， 就让它开发了一个。 不知道会有什么问题， 能用 github 2FA 就行了吧。 
+
+
+
