@@ -5,10 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/models/totp_account.dart';
+import '../../data/storage/encrypted_account_repository.dart';
+import '../../totp/otpauth_uri_parser.dart';
 import '../../totp/totp_generator.dart';
+import '../add_account/qr_scanner_page.dart';
 
 class AccountsPage extends StatefulWidget {
-  const AccountsPage({super.key});
+  const AccountsPage({super.key, this.repository});
+
+  final AccountRepository? repository;
 
   @override
   State<AccountsPage> createState() => _AccountsPageState();
@@ -16,14 +21,19 @@ class AccountsPage extends StatefulWidget {
 
 class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver {
   final List<TotpAccount> _accounts = [];
+  late final AccountRepository _repository;
   Timer? _clock;
   DateTime _now = DateTime.now();
+  bool _loading = true;
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository ?? EncryptedAccountRepository(keyStore: FlutterDeviceKeyStore());
     WidgetsBinding.instance.addObserver(this);
     _clock = Timer.periodic(const Duration(seconds: 1), (_) => _refreshTime());
+    _loadAccounts();
   }
 
   @override
@@ -42,11 +52,61 @@ class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver
     if (mounted) setState(() => _now = DateTime.now());
   }
 
+  Future<void> _loadAccounts() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final loaded = await _repository.loadAccounts();
+      if (!mounted) return;
+      setState(() {
+        _accounts
+          ..clear()
+          ..addAll(loaded);
+        _loading = false;
+      });
+    } on LocalAccountDataException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.message;
+        _loading = false;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'The local account store is unavailable. No saved data was changed.';
+        _loading = false;
+      });
+    }
+  }
+
   Future<void> _addAccount() async {
-    final account = await showDialog<TotpAccount>(
+    if (_loading || _loadError != null) return;
+    final method = await showModalBottomSheet<_AddMethod>(
       context: context,
-      builder: (_) => const AddAccountDialog(),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Enter details manually'),
+              onTap: () => Navigator.pop(context, _AddMethod.manual),
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code_scanner),
+              title: const Text('Scan a setup QR code'),
+              subtitle: const Text('Camera access is requested only when scanning starts.'),
+              onTap: () => Navigator.pop(context, _AddMethod.scan),
+            ),
+          ],
+        ),
+      ),
     );
+    if (method == null || !mounted) return;
+    final account = method == _AddMethod.manual
+        ? await showDialog<TotpAccount>(context: context, builder: (_) => const AddAccountDialog())
+        : await _scanAndConfirm();
     if (account == null || !mounted) return;
     final duplicate = _accounts.any((existing) =>
         existing.issuer.toLowerCase() == account.issuer.toLowerCase() &&
@@ -57,7 +117,58 @@ class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver
       );
       return;
     }
-    setState(() => _accounts.add(account));
+    final updatedAccounts = [..._accounts, account];
+    try {
+      await _repository.saveAccounts(updatedAccounts);
+      if (mounted) setState(() => _accounts.add(account));
+    } on LocalAccountDataException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('The account could not be securely saved. No account was added.')),
+        );
+      }
+    }
+  }
+
+  Future<TotpAccount?> _scanAndConfirm() async {
+    final rawUri = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const QrScannerPage()),
+    );
+    if (rawUri == null || !mounted) return null;
+    late final OtpAuthAccountConfig config;
+    try {
+      config = OtpAuthUriParser.parse(rawUri);
+    } on OtpAuthFormatException catch (error) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      return null;
+    }
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm scanned account'),
+        content: Text(
+          '${config.issuer}\n${config.accountName}\n${config.algorithm.name.toUpperCase()}, ${config.digits} digits, ${config.period} seconds',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (approved != true || !mounted) return null;
+    return TotpAccount(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      issuer: config.issuer,
+      accountName: config.accountName,
+      secret: config.secret,
+      algorithm: config.algorithm,
+      digits: config.digits,
+      period: config.period,
+    );
   }
 
   Future<void> _copyCode(String code) async {
@@ -70,8 +181,12 @@ class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('TinyOTP')),
-      body: _accounts.isEmpty
-          ? _EmptyState(onAdd: _addAccount)
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(semanticsLabel: 'Loading accounts'))
+          : _loadError != null
+              ? _StorageErrorState(message: _loadError!, onRetry: _loadAccounts)
+              : _accounts.isEmpty
+                  ? _EmptyState(onAdd: _addAccount)
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               itemCount: _accounts.length,
@@ -107,12 +222,43 @@ class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver
               },
             ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addAccount,
+        onPressed: _loading || _loadError != null ? null : _addAccount,
         icon: const Icon(Icons.add),
         label: const Text('Add account'),
       ),
     );
   }
+}
+
+enum _AddMethod { manual, scan }
+
+class _StorageErrorState extends StatelessWidget {
+  const _StorageErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 48),
+              const SizedBox(height: 16),
+              Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              const Text(
+                'TinyOTP has not replaced the encrypted data with a new key.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
+            ],
+          ),
+        ),
+      );
 }
 
 class _EmptyState extends StatelessWidget {
