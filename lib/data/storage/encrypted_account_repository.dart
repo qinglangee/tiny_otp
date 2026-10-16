@@ -66,6 +66,8 @@ class LocalEncryptionKeyUnavailableException extends LocalAccountDataException {
 /// the encrypted file.
 class EncryptedAccountRepository implements AccountRepository {
   EncryptedAccountRepository({
+    // Keep the public argument name while retaining a private implementation field.
+    // ignore: prefer_initializing_formals
     required DeviceKeyStore keyStore,
     Future<Directory> Function()? supportDirectoryProvider,
     Random? secureRandom,

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +9,7 @@ import '../../totp/otpauth_uri_parser.dart';
 import '../../totp/totp_generator.dart';
 import '../add_account/qr_scanner_page.dart';
 import '../backup/backup_page.dart';
+import '../help/help_page.dart';
 
 class AccountsPage extends StatefulWidget {
   const AccountsPage({super.key, this.repository});
@@ -169,9 +169,10 @@ class _AccountsPageState extends State<AccountsPage>
   }
 
   void _showMessage(String message) {
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   String _codeFor(TotpAccount account, DateTime time) {
@@ -348,6 +349,13 @@ class _AccountsPageState extends State<AccountsPage>
         title: const Text('TinyOTP'),
         actions: [
           IconButton(
+            tooltip: 'Help and user guide',
+            icon: const Icon(Icons.help_outline),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const HelpPage()),
+            ),
+          ),
+          IconButton(
             tooltip: 'Encrypted backup and restore',
             icon: const Icon(Icons.enhanced_encryption_outlined),
             onPressed: _loading || _loadError != null
@@ -418,7 +426,7 @@ class _AccountsPageState extends State<AccountsPage>
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                           itemCount: visibleAccounts.length,
-                          separatorBuilder: (_, __) =>
+                          separatorBuilder: (_, _) =>
                               const SizedBox(height: 10),
                           itemBuilder: (context, index) {
                             final account = visibleAccounts[index];
@@ -854,7 +862,7 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<TotpAlgorithm>(
-              value: _algorithm,
+              initialValue: _algorithm,
               decoration: const InputDecoration(labelText: 'Algorithm'),
               items: TotpAlgorithm.values
                   .map(
@@ -868,7 +876,7 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
                   setState(() => _algorithm = value ?? TotpAlgorithm.sha1),
             ),
             DropdownButtonFormField<int>(
-              value: _digits,
+              initialValue: _digits,
               decoration: const InputDecoration(labelText: 'Digits'),
               items: const [6, 8]
                   .map(
