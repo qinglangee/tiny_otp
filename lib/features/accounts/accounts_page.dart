@@ -9,6 +9,7 @@ import '../../data/storage/encrypted_account_repository.dart';
 import '../../totp/otpauth_uri_parser.dart';
 import '../../totp/totp_generator.dart';
 import '../add_account/qr_scanner_page.dart';
+import '../backup/backup_page.dart';
 
 class AccountsPage extends StatefulWidget {
   const AccountsPage({super.key, this.repository});
@@ -180,7 +181,23 @@ class _AccountsPageState extends State<AccountsPage> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('TinyOTP')),
+      appBar: AppBar(
+        title: const Text('TinyOTP'),
+        actions: [
+          IconButton(
+            tooltip: 'Encrypted backup and restore',
+            icon: const Icon(Icons.enhanced_encryption_outlined),
+            onPressed: _loading || _loadError != null
+                ? null
+                : () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => BackupPage(repository: _repository)),
+                    );
+                    if (mounted) await _loadAccounts();
+                  },
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(semanticsLabel: 'Loading accounts'))
           : _loadError != null
